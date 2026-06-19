@@ -371,7 +371,16 @@ def build_config(args: argparse.Namespace) -> tuple[dict, list[str]]:
 
     outbounds = [*group_outbounds, *profile.proxies, {"type": "direct", "tag": "direct"}, {"type": "block", "tag": "block"}]
 
-    route_rules = profile.route_rules if not args.no_rules else []
+    route_rules = []
+    if not args.no_modes:
+        route_rules.extend(
+            [
+                {"clash_mode": "Global", "action": "route", "outbound": final_outbound},
+                {"clash_mode": "Direct", "action": "route", "outbound": "direct"},
+            ]
+        )
+    if not args.no_rules:
+        route_rules.extend(profile.route_rules)
     config = {
         "log": {"level": args.log_level},
         "dns": {
@@ -417,6 +426,7 @@ def build_config(args: argparse.Namespace) -> tuple[dict, list[str]]:
             "clash_api": {
                 "external_controller": args.api_listen,
                 "secret": args.secret,
+                "default_mode": "Rule",
             },
         },
     }
@@ -512,6 +522,17 @@ def command_switch(args: argparse.Namespace) -> None:
     print(args.node)
 
 
+def command_mode(args: argparse.Namespace) -> None:
+    if args.mode:
+        api_request(args.controller, args.secret, "PATCH", "/configs", {"mode": args.mode})
+    data = api_request(args.controller, args.secret, "GET", "/configs")
+    if isinstance(data, dict):
+        print(data.get("mode", ""))
+        modes = data.get("mode-list")
+        if modes:
+            print("available: " + ", ".join(modes), file=sys.stderr)
+
+
 def command_run(args: argparse.Namespace) -> None:
     binary = args.sing_box
     if os.sep not in binary:
@@ -562,6 +583,7 @@ def add_generate_args(parser: argparse.ArgumentParser, include_output: bool = Tr
     parser.add_argument("--cache-path", default="cache.db")
     parser.add_argument("--log-level", default="info")
     parser.add_argument("--no-rules", action="store_true", help="ignore Surge [Rule] and route everything to the final group")
+    parser.add_argument("--no-modes", action="store_true", help="do not add Clash mode override rules for Rule/Global/Direct switching")
     parser.add_argument("--geoip-cn-rule-set", default="", help="local .srs/.json path or remote URL to use for Surge GEOIP,CN rules")
     parser.add_argument("--rule-set-update-interval", default="7d")
 
@@ -593,6 +615,11 @@ def main() -> None:
     switch.add_argument("node")
     add_api_args(switch)
     switch.set_defaults(func=command_switch)
+
+    mode = sub.add_parser("mode", help="get or set Clash mode via API: Rule, Global, or Direct")
+    mode.add_argument("mode", nargs="?", choices=["Rule", "Global", "Direct", "rule", "global", "direct"])
+    add_api_args(mode)
+    mode.set_defaults(func=command_mode)
 
     args = parser.parse_args()
     args.func(args)

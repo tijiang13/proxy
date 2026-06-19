@@ -119,6 +119,40 @@ python3 surge2singbox.py generate surge_full.conf \
   --secret change-this
 ```
 
+
+## Remote Rule / Global / Direct Mode
+
+The generated config uses Surge rules by default with Clash mode `Rule`. It also
+adds mode override rules so the Clash API can switch routing mode remotely:
+
+- `Rule`: use converted Surge `[Rule]` entries
+- `Global`: route all traffic to the `Proxy` selector
+- `Direct`: route all traffic direct
+
+Check current mode:
+
+```bash
+python3 surge2singbox.py mode \
+  --controller http://raspberrypi.local:9090 \
+  --secret change-this
+```
+
+Switch to Global:
+
+```bash
+python3 surge2singbox.py mode Global \
+  --controller http://raspberrypi.local:9090 \
+  --secret change-this
+```
+
+Switch back to Rule:
+
+```bash
+python3 surge2singbox.py mode Rule \
+  --controller http://raspberrypi.local:9090 \
+  --secret change-this
+```
+
 ## CLI Switching
 
 List available nodes from the generated config:
