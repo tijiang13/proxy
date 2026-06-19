@@ -201,6 +201,21 @@ def surge_interval_to_duration(value: str | None, default: str) -> str:
     return f"{value}s"
 
 
+def urltest_outbound(tag: str, outbounds: list[str], url: str, interval: str) -> dict:
+    # sing-box requires interval <= idle_timeout. The provider profile uses a
+    # long 43200s url-test interval, while sing-box defaults idle_timeout to
+    # 30m, so set it explicitly.
+    return {
+        "type": "urltest",
+        "tag": tag,
+        "outbounds": outbounds,
+        "url": url,
+        "interval": interval,
+        "idle_timeout": interval,
+        "interrupt_exist_connections": True,
+    }
+
+
 def build_group_outbounds(groups: list[SurgeGroup], proxy_tags: list[str], warnings: list[str]) -> list[dict]:
     outbounds: list[dict] = []
     proxy_set = set(proxy_tags)
@@ -224,29 +239,27 @@ def build_group_outbounds(groups: list[SurgeGroup], proxy_tags: list[str], warni
                 }
             )
         elif group.kind in {"url_test", "urltest"}:
+            interval = surge_interval_to_duration(group.params.get("interval"), "12h")
             outbounds.append(
-                {
-                    "type": "urltest",
-                    "tag": group.name,
-                    "outbounds": [m for m in members if m in proxy_set],
-                    "url": group.params.get("url", DEFAULT_TEST_URL),
-                    "interval": surge_interval_to_duration(group.params.get("interval"), "12h"),
-                    "interrupt_exist_connections": True,
-                }
+                urltest_outbound(
+                    group.name,
+                    [m for m in members if m in proxy_set],
+                    group.params.get("url", DEFAULT_TEST_URL),
+                    interval,
+                )
             )
         elif group.kind == "fallback":
             # sing-box has no Surge-style fallback outbound group. For this use case,
             # urltest is the closest controllable group type and avoids custom health logic.
             warnings.append("mapped Surge fallback group 'fallback' to sing-box urltest; sing-box has no native fallback group")
+            interval = surge_interval_to_duration(group.params.get("interval"), "12h")
             outbounds.append(
-                {
-                    "type": "urltest",
-                    "tag": group.name,
-                    "outbounds": [m for m in members if m in proxy_set],
-                    "url": group.params.get("url", DEFAULT_TEST_URL),
-                    "interval": surge_interval_to_duration(group.params.get("interval"), "12h"),
-                    "interrupt_exist_connections": True,
-                }
+                urltest_outbound(
+                    group.name,
+                    [m for m in members if m in proxy_set],
+                    group.params.get("url", DEFAULT_TEST_URL),
+                    interval,
+                )
             )
         else:
             warnings.append(f"unsupported Surge group type {group.kind!r} for {group.name!r}; using selector")
@@ -345,14 +358,7 @@ def build_config(args: argparse.Namespace) -> tuple[dict, list[str]]:
     else:
         auto_tag = "auto"
         group_outbounds = [
-            {
-                "type": "urltest",
-                "tag": auto_tag,
-                "outbounds": profile.proxy_tags,
-                "url": args.test_url,
-                "interval": args.test_interval,
-                "interrupt_exist_connections": True,
-            },
+            urltest_outbound(auto_tag, profile.proxy_tags, args.test_url, args.test_interval),
             {
                 "type": "selector",
                 "tag": args.selector,
