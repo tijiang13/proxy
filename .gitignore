@@ -1,0 +1,49 @@
+# Local secrets / environment
+.env
+.env.*
+!.env.example
+.claude/settings.local.json
+
+# Provider subscriptions / generated proxy profiles with tokens/passwords
+**/surge_full*.conf
+**/surge_proxies*.conf
+**/clash_sub*.yaml
+**/config.json
+**/*config*.json
+**/*subscription*
+**/*subscribe*
+**/android.txt
+
+# Python/runtime cache
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# sing-box binaries/releases/generated runtime state
+*.tar.gz
+*.zip
+*.deb
+*.rpm
+*.apk
+**/sing-box-*-linux-*/
+**/cache.db
+*.db
+
+# Cloned upstream source used only for reference; keep as external/submodule later if needed
+pi-singbox/sing-box/
+
+# OS/editor noise
+.DS_Store
+*.swp
+*~
+
+# Decompiled/extracted Android app artifacts; regenerate from APK when needed
+maomaoyun/app/
+
+# Third-party bootstrap/download helpers
+maomaoyun/get-pip.py
+
+# Local planning notes
+COMMIT_PLAN.md
