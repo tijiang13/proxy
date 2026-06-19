@@ -120,6 +120,66 @@ python3 surge2singbox.py generate surge_full.conf \
 ```
 
 
+
+## Optional Flask Web UI on 9091
+
+Instead of exposing the raw sing-box Clash API to the LAN, keep it private:
+
+```bash
+--api-listen 127.0.0.1:9090
+```
+
+Then run the Flask control UI on LAN port `9091`:
+
+```bash
+cd /home/pi/proxy/pi-singbox
+python3 -m venv .venv
+. .venv/bin/activate
+pip install -r requirements-web.txt
+
+SING_BOX_CONTROLLER=http://127.0.0.1:9090 \
+SING_BOX_SECRET=change-this \
+WEB_SECRET=choose-a-web-password \
+python3 web.py
+```
+
+Open:
+
+```text
+http://raspberrypi.local:9091
+```
+
+The web UI can:
+
+- switch `Rule` / `Global` / `Direct` mode
+- show the current `Proxy` selector choice
+- switch nodes in the `Proxy` selector
+
+For systemd, run sing-box with `--api-listen 127.0.0.1:9090`, then add a
+second service for the web UI:
+
+```ini
+[Unit]
+Description=Pi sing-box web control UI
+Wants=network-online.target pi-singbox.service
+After=network-online.target pi-singbox.service
+
+[Service]
+Type=simple
+WorkingDirectory=/home/pi/proxy/pi-singbox
+Environment=SING_BOX_CONTROLLER=http://127.0.0.1:9090
+Environment=SING_BOX_SECRET=change-this
+Environment=WEB_SECRET=choose-a-web-password
+Environment=WEB_HOST=0.0.0.0
+Environment=WEB_PORT=9091
+ExecStart=/home/pi/proxy/pi-singbox/.venv/bin/python /home/pi/proxy/pi-singbox/web.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
 ## Remote Rule / Global / Direct Mode
 
 The generated config uses Surge rules by default with Clash mode `Rule`. It also
