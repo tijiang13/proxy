@@ -51,6 +51,11 @@ class ParsedProfile:
     general_direct_rules: list[dict]
     route_rules: list[dict]
     final_outbound: str
+    provider_doh_host: str
+    provider_doh_path: str
+    bootstrap_dns: str | None
+    proxy_test_url: str | None
+    ipv4_only: bool
     warnings: list[str]
 
 
@@ -203,6 +208,34 @@ def general_value_list(sections: dict[str, list[str]], key: str) -> list[str]:
     return values
 
 
+def general_first_value(sections: dict[str, list[str]], key: str) -> str | None:
+    values = general_value_list(sections, key)
+    return values[0] if values else None
+
+
+def general_bool(sections: dict[str, list[str]], key: str, default: bool) -> bool:
+    value = general_first_value(sections, key)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def parse_https_dns_server(value: str) -> tuple[str, str] | None:
+    parsed = urllib.parse.urlparse(value)
+    if parsed.scheme != "https" or not parsed.hostname:
+        return None
+    return parsed.hostname, parsed.path or "/dns-query"
+
+
+def first_plain_dns_server(values: list[str]) -> str | None:
+    for value in values:
+        lower = value.lower()
+        if lower == "system" or lower.startswith(("https://", "tls://")):
+            continue
+        return value.split(":", 1)[0].strip()
+    return None
+
+
 def direct_rule_from_general_item(item: str) -> dict | None:
     value = item.strip()
     if not value:
@@ -225,8 +258,14 @@ def parse_general_direct_rules(path: Path, warnings: list[str]) -> list[dict]:
     sections = read_sections(path)
     rules: list[dict] = []
     seen: set[str] = set()
-    for item in general_value_list(sections, "skip-proxy") + general_value_list(sections, "tun-excluded-routes"):
-        rule = direct_rule_from_general_item(item)
+    general_items = general_value_list(sections, "skip-proxy") + general_value_list(sections, "tun-excluded-routes")
+    if general_bool(sections, "exclude-simple-hostnames", False):
+        general_items.append("__SIMPLE_HOSTNAMES__")
+    for item in general_items:
+        if item == "__SIMPLE_HOSTNAMES__":
+            rule = {"action": "route", "outbound": "direct", "domain_regex": [r"^[^.]+$"]}
+        else:
+            rule = direct_rule_from_general_item(item)
         if not rule:
             continue
         key = json.dumps(rule, sort_keys=True)
@@ -383,6 +422,21 @@ def parse_route_rules(path: Path, warnings: list[str], geoip_rule_sets: dict[str
     return rules, final
 
 
+def parse_general_runtime_options(path: Path) -> tuple[str, str, str | None, str | None, bool]:
+    sections = read_sections(path)
+    provider_host = PROVIDER_DOH_HOST
+    provider_path = PROVIDER_DOH_PATH
+    for value in general_value_list(sections, "encrypted-dns-server"):
+        parsed = parse_https_dns_server(value)
+        if parsed:
+            provider_host, provider_path = parsed
+            break
+    bootstrap_dns = first_plain_dns_server(general_value_list(sections, "dns-server"))
+    proxy_test_url = general_first_value(sections, "proxy-test-url")
+    ipv4_only = not general_bool(sections, "ipv6", True)
+    return provider_host, provider_path, bootstrap_dns, proxy_test_url, ipv4_only
+
+
 def parse_profile(path: Path, geoip_rule_sets: dict[str, str] | None = None) -> ParsedProfile:
     warnings: list[str] = []
     proxies = parse_surge_anytls(path)
@@ -390,7 +444,21 @@ def parse_profile(path: Path, geoip_rule_sets: dict[str, str] | None = None) -> 
     groups = parse_proxy_groups(path, set(proxy_tags))
     general_direct_rules = parse_general_direct_rules(path, warnings)
     route_rules, final_outbound = parse_route_rules(path, warnings, geoip_rule_sets or {})
-    return ParsedProfile(proxies, proxy_tags, groups, general_direct_rules, route_rules, final_outbound, warnings)
+    provider_host, provider_path, bootstrap_dns, proxy_test_url, ipv4_only = parse_general_runtime_options(path)
+    return ParsedProfile(
+        proxies,
+        proxy_tags,
+        groups,
+        general_direct_rules,
+        route_rules,
+        final_outbound,
+        provider_host,
+        provider_path,
+        bootstrap_dns,
+        proxy_test_url,
+        ipv4_only,
+        warnings,
+    )
 
 
 def build_config(args: argparse.Namespace) -> tuple[dict, list[str]]:
@@ -409,7 +477,7 @@ def build_config(args: argparse.Namespace) -> tuple[dict, list[str]]:
     else:
         auto_tag = "auto"
         group_outbounds = [
-            urltest_outbound(auto_tag, profile.proxy_tags, args.test_url, args.test_interval),
+            urltest_outbound(auto_tag, profile.proxy_tags, profile.proxy_test_url or args.test_url, args.test_interval),
             {
                 "type": "selector",
                 "tag": args.selector,
@@ -441,20 +509,20 @@ def build_config(args: argparse.Namespace) -> tuple[dict, list[str]]:
                 {
                     "type": "udp",
                     "tag": "bootstrap-dns",
-                    "server": args.bootstrap_dns,
+                    "server": profile.bootstrap_dns or args.bootstrap_dns,
                     "server_port": 53,
                 },
                 {
                     "type": "https",
                     "tag": "provider-doh",
-                    "server": PROVIDER_DOH_HOST,
+                    "server": profile.provider_doh_host,
                     "server_port": 443,
-                    "path": PROVIDER_DOH_PATH,
+                    "path": profile.provider_doh_path,
                     "domain_resolver": "bootstrap-dns",
                 },
             ],
             "final": "provider-doh",
-            "strategy": "ipv4_only",
+            "strategy": "ipv4_only" if profile.ipv4_only else "prefer_ipv4",
         },
         "inbounds": [
             {
