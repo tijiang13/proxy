@@ -49,6 +49,7 @@ class ParsedProfile:
     proxy_tags: list[str]
     groups: list[SurgeGroup]
     general_direct_rules: list[dict]
+    dns_rules: list[dict]
     route_rules: list[dict]
     final_outbound: str
     provider_doh_host: str
@@ -247,7 +248,11 @@ def direct_rule_from_general_item(item: str) -> dict | None:
     if value in {"localhost", "localhost.localdomain"}:
         return {"action": "route", "outbound": "direct", "domain": [value]}
     if value.startswith("*."):
-        return {"action": "route", "outbound": "direct", "domain_suffix": ["." + value[2:]]}
+        suffix = "." + value[2:]
+        suffixes = [suffix]
+        if suffix == ".local":
+            suffixes.append(".local.")
+        return {"action": "route", "outbound": "direct", "domain_suffix": suffixes}
     if "*" in value or "?" in value:
         regex = "^" + value.replace(".", r"\.").replace("*", ".*").replace("?", ".") + "$"
         return {"action": "route", "outbound": "direct", "domain_regex": [regex]}
@@ -275,6 +280,19 @@ def parse_general_direct_rules(path: Path, warnings: list[str]) -> list[dict]:
         rules.append(rule)
     if rules:
         warnings.append(f"added {len(rules)} direct route rules from [General] skip-proxy/tun-excluded-routes")
+    return rules
+
+
+def parse_general_dns_rules(path: Path) -> list[dict]:
+    sections = read_sections(path)
+    rules: list[dict] = []
+    skip_items = set(general_value_list(sections, "skip-proxy"))
+    if "localhost" in skip_items or "localhost.localdomain" in skip_items:
+        rules.append({"action": "route", "server": "local-dns", "domain": ["localhost", "localhost.localdomain"]})
+    if "*.local" in skip_items:
+        rules.append({"action": "route", "server": "local-dns", "domain_suffix": [".local", ".local."]})
+    if general_bool(sections, "exclude-simple-hostnames", False):
+        rules.append({"action": "route", "server": "local-dns", "domain_regex": [r"^[^.]+\.?$"]})
     return rules
 
 
@@ -443,6 +461,7 @@ def parse_profile(path: Path, geoip_rule_sets: dict[str, str] | None = None) -> 
     proxy_tags = [proxy["tag"] for proxy in proxies]
     groups = parse_proxy_groups(path, set(proxy_tags))
     general_direct_rules = parse_general_direct_rules(path, warnings)
+    dns_rules = parse_general_dns_rules(path)
     route_rules, final_outbound = parse_route_rules(path, warnings, geoip_rule_sets or {})
     provider_host, provider_path, bootstrap_dns, proxy_test_url, ipv4_only = parse_general_runtime_options(path)
     return ParsedProfile(
@@ -450,6 +469,7 @@ def parse_profile(path: Path, geoip_rule_sets: dict[str, str] | None = None) -> 
         proxy_tags,
         groups,
         general_direct_rules,
+        dns_rules,
         route_rules,
         final_outbound,
         provider_host,
@@ -520,7 +540,12 @@ def build_config(args: argparse.Namespace) -> tuple[dict, list[str]]:
                     "path": profile.provider_doh_path,
                     "domain_resolver": "bootstrap-dns",
                 },
+                {
+                    "type": "local",
+                    "tag": "local-dns",
+                },
             ],
+            "rules": profile.dns_rules,
             "final": "provider-doh",
             "strategy": "ipv4_only" if profile.ipv4_only else "prefer_ipv4",
         },
