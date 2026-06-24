@@ -508,7 +508,12 @@ def build_config(args: argparse.Namespace) -> tuple[dict, list[str]]:
         ]
         final_outbound = args.selector
 
-    outbounds = [*group_outbounds, *profile.proxies, {"type": "direct", "tag": "direct"}, {"type": "block", "tag": "block"}]
+    outbounds = [
+        *group_outbounds,
+        *profile.proxies,
+        {"type": "direct", "tag": "direct", "domain_resolver": "local-dns"},
+        {"type": "block", "tag": "block"},
+    ]
 
     route_rules = []
     if not args.no_general:
