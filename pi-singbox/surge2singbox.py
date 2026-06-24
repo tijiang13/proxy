@@ -48,6 +48,7 @@ class ParsedProfile:
     proxies: list[dict]
     proxy_tags: list[str]
     groups: list[SurgeGroup]
+    general_direct_rules: list[dict]
     route_rules: list[dict]
     final_outbound: str
     warnings: list[str]
@@ -187,6 +188,55 @@ def parse_proxy_groups(path: Path, valid_tags: set[str]) -> list[SurgeGroup]:
             members.append(member)
         groups.append(SurgeGroup(name=name, kind=kind, members=members, params=params))
     return groups
+
+
+def general_value_list(sections: dict[str, list[str]], key: str) -> list[str]:
+    prefix = key.lower()
+    values: list[str] = []
+    for line in sections.get("General", []):
+        if "=" not in line:
+            continue
+        name, value = line.split("=", 1)
+        if name.strip().lower() != prefix:
+            continue
+        values.extend(item.strip() for item in value.split(",") if item.strip())
+    return values
+
+
+def direct_rule_from_general_item(item: str) -> dict | None:
+    value = item.strip()
+    if not value:
+        return None
+    if value.lower().startswith("server:"):
+        return None
+    if "/" in value and not any(ch in value for ch in "*?"):
+        return {"action": "route", "outbound": "direct", "ip_cidr": [value]}
+    if value in {"localhost", "localhost.localdomain"}:
+        return {"action": "route", "outbound": "direct", "domain": [value]}
+    if value.startswith("*."):
+        return {"action": "route", "outbound": "direct", "domain_suffix": ["." + value[2:]]}
+    if "*" in value or "?" in value:
+        regex = "^" + value.replace(".", r"\.").replace("*", ".*").replace("?", ".") + "$"
+        return {"action": "route", "outbound": "direct", "domain_regex": [regex]}
+    return {"action": "route", "outbound": "direct", "domain": [value]}
+
+
+def parse_general_direct_rules(path: Path, warnings: list[str]) -> list[dict]:
+    sections = read_sections(path)
+    rules: list[dict] = []
+    seen: set[str] = set()
+    for item in general_value_list(sections, "skip-proxy") + general_value_list(sections, "tun-excluded-routes"):
+        rule = direct_rule_from_general_item(item)
+        if not rule:
+            continue
+        key = json.dumps(rule, sort_keys=True)
+        if key in seen:
+            continue
+        seen.add(key)
+        rules.append(rule)
+    if rules:
+        warnings.append(f"added {len(rules)} direct route rules from [General] skip-proxy/tun-excluded-routes")
+    return rules
 
 
 def surge_interval_to_duration(value: str | None, default: str) -> str:
@@ -338,8 +388,9 @@ def parse_profile(path: Path, geoip_rule_sets: dict[str, str] | None = None) -> 
     proxies = parse_surge_anytls(path)
     proxy_tags = [proxy["tag"] for proxy in proxies]
     groups = parse_proxy_groups(path, set(proxy_tags))
+    general_direct_rules = parse_general_direct_rules(path, warnings)
     route_rules, final_outbound = parse_route_rules(path, warnings, geoip_rule_sets or {})
-    return ParsedProfile(proxies, proxy_tags, groups, route_rules, final_outbound, warnings)
+    return ParsedProfile(proxies, proxy_tags, groups, general_direct_rules, route_rules, final_outbound, warnings)
 
 
 def build_config(args: argparse.Namespace) -> tuple[dict, list[str]]:
@@ -372,6 +423,8 @@ def build_config(args: argparse.Namespace) -> tuple[dict, list[str]]:
     outbounds = [*group_outbounds, *profile.proxies, {"type": "direct", "tag": "direct"}, {"type": "block", "tag": "block"}]
 
     route_rules = []
+    if not args.no_general:
+        route_rules.extend(profile.general_direct_rules)
     if not args.no_modes:
         route_rules.extend(
             [
@@ -583,6 +636,7 @@ def add_generate_args(parser: argparse.ArgumentParser, include_output: bool = Tr
     parser.add_argument("--cache-path", default="cache.db")
     parser.add_argument("--log-level", default="info")
     parser.add_argument("--no-rules", action="store_true", help="ignore Surge [Rule] and route everything to the final group")
+    parser.add_argument("--no-general", action="store_true", help="ignore [General] skip-proxy/tun-excluded-routes direct bypass rules")
     parser.add_argument("--no-modes", action="store_true", help="do not add Clash mode override rules for Rule/Global/Direct switching")
     parser.add_argument("--geoip-cn-rule-set", default="", help="local .srs/.json path or remote URL to use for Surge GEOIP,CN rules")
     parser.add_argument("--rule-set-update-interval", default="7d")
