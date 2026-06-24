@@ -511,7 +511,7 @@ def build_config(args: argparse.Namespace) -> tuple[dict, list[str]]:
     outbounds = [
         *group_outbounds,
         *profile.proxies,
-        {"type": "direct", "tag": "direct", "domain_resolver": "local-dns"},
+        {"type": "direct", "tag": "direct"},
         {"type": "block", "tag": "block"},
     ]
 
@@ -527,6 +527,15 @@ def build_config(args: argparse.Namespace) -> tuple[dict, list[str]]:
         )
     if not args.no_rules:
         route_rules.extend(profile.route_rules)
+    local_dns_server = {"type": "local", "tag": "local-dns"}
+    if args.local_dns_server:
+        local_dns_server = {
+            "type": "udp",
+            "tag": "local-dns",
+            "server": args.local_dns_server,
+            "server_port": args.local_dns_port,
+        }
+
     config = {
         "log": {"level": args.log_level},
         "dns": {
@@ -545,10 +554,7 @@ def build_config(args: argparse.Namespace) -> tuple[dict, list[str]]:
                     "path": profile.provider_doh_path,
                     "domain_resolver": "bootstrap-dns",
                 },
-                {
-                    "type": "local",
-                    "tag": "local-dns",
-                },
+                local_dns_server,
             ],
             "rules": profile.dns_rules,
             "final": "provider-doh",
@@ -731,6 +737,8 @@ def add_generate_args(parser: argparse.ArgumentParser, include_output: bool = Tr
     parser.add_argument("--test-url", default=DEFAULT_TEST_URL)
     parser.add_argument("--test-interval", default="12h")
     parser.add_argument("--bootstrap-dns", default="223.5.5.5")
+    parser.add_argument("--local-dns-server", default="", help="optional UDP DNS server for local names, e.g. 127.0.0.1 with nss_dns.py")
+    parser.add_argument("--local-dns-port", type=int, default=1053)
     parser.add_argument("--cache-path", default="cache.db")
     parser.add_argument("--log-level", default="info")
     parser.add_argument("--no-rules", action="store_true", help="ignore Surge [Rule] and route everything to the final group")
