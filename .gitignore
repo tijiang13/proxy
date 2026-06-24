@@ -47,3 +47,6 @@ maomaoyun/get-pip.py
 
 # Local planning notes
 COMMIT_PLAN.md
+
+# Ad-hoc generated sing-box configs
+pi-singbox/sb*.json
