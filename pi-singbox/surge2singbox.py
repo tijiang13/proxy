@@ -48,6 +48,7 @@ class ParsedProfile:
     proxies: list[dict]
     proxy_tags: list[str]
     groups: list[SurgeGroup]
+    general_resolve_rules: list[dict]
     general_direct_rules: list[dict]
     dns_rules: list[dict]
     route_rules: list[dict]
@@ -296,6 +297,19 @@ def parse_general_dns_rules(path: Path) -> list[dict]:
     return rules
 
 
+def parse_general_resolve_rules(path: Path) -> list[dict]:
+    sections = read_sections(path)
+    rules: list[dict] = []
+    skip_items = set(general_value_list(sections, "skip-proxy"))
+    if "localhost" in skip_items or "localhost.localdomain" in skip_items:
+        rules.append({"action": "resolve", "server": "local-dns", "domain": ["localhost", "localhost.localdomain"]})
+    if "*.local" in skip_items:
+        rules.append({"action": "resolve", "server": "local-dns", "domain_suffix": [".local", ".local."]})
+    if general_bool(sections, "exclude-simple-hostnames", False):
+        rules.append({"action": "resolve", "server": "local-dns", "domain_regex": [r"^[^.]+\.?$"]})
+    return rules
+
+
 def surge_interval_to_duration(value: str | None, default: str) -> str:
     if not value:
         return default
@@ -460,6 +474,7 @@ def parse_profile(path: Path, geoip_rule_sets: dict[str, str] | None = None) -> 
     proxies = parse_surge_anytls(path)
     proxy_tags = [proxy["tag"] for proxy in proxies]
     groups = parse_proxy_groups(path, set(proxy_tags))
+    general_resolve_rules = parse_general_resolve_rules(path)
     general_direct_rules = parse_general_direct_rules(path, warnings)
     dns_rules = parse_general_dns_rules(path)
     route_rules, final_outbound = parse_route_rules(path, warnings, geoip_rule_sets or {})
@@ -468,6 +483,7 @@ def parse_profile(path: Path, geoip_rule_sets: dict[str, str] | None = None) -> 
         proxies,
         proxy_tags,
         groups,
+        general_resolve_rules,
         general_direct_rules,
         dns_rules,
         route_rules,
@@ -517,6 +533,7 @@ def build_config(args: argparse.Namespace) -> tuple[dict, list[str]]:
 
     route_rules = []
     if not args.no_general:
+        route_rules.extend(profile.general_resolve_rules)
         route_rules.extend(profile.general_direct_rules)
     if not args.no_modes:
         route_rules.extend(
